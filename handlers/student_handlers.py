@@ -33,6 +33,8 @@ class AddSlotFSM(StatesGroup):
     student_id = State()
     day_of_week = State()
     time_str = State()
+    subject = State()
+    price = State()
 
 class EditNotesFSM(StatesGroup):
     student_id = State()
@@ -42,7 +44,8 @@ class AddSingleLessonFSM(StatesGroup):
     student_id = State()
     datetime_str = State()
     duration = State()
-    topic = State()
+    subject = State()
+    price = State()
 
 # --- Просмотр учеников ---
 
@@ -84,10 +87,11 @@ async def cb_view_student(callback: CallbackQuery, state: FSMContext):
     
     slots_text = ""
     if student.recurring_slots:
-        slots_list = [
-            f"• {DAYS_FULL[s.day_of_week]} в {s.start_time.strftime('%H:%M')} ({s.duration_minutes} мин.)"
-            for s in student.recurring_slots
-        ]
+        slots_list = []
+        for s in student.recurring_slots:
+            slot_subj = f" [{s.subject}]" if s.subject else ""
+            slot_pr = f" ({s.price:,.0f} ₽)" if s.price is not None else ""
+            slots_list.append(f"• {DAYS_FULL[s.day_of_week]} в {s.start_time.strftime('%H:%M')}{slot_subj}{slot_pr} ({s.duration_minutes} мин.)")
         slots_text = "\n".join(slots_list)
     else:
         slots_text = "<i>Регулярное расписание не настроено</i>"
@@ -106,10 +110,10 @@ async def cb_view_student(callback: CallbackQuery, state: FSMContext):
 
     text = (
         f"👤 <b>Карточка ученика: {student.name}</b>\n\n"
-        f"📚 <b>Предмет:</b> {student.subject or 'Не указан'}\n"
+        f"📚 <b>Предмет(ы):</b> {student.subject or 'Не указан'}\n"
         f"📱 <b>Контакт:</b> {student.contact or 'Не указан'}\n"
         f"📊 <b>Статус:</b> {status_str}\n"
-        f"💵 <b>Тариф:</b> {billing_type_str} ({student.lesson_price:,.0f} ₽/урок)\n"
+        f"💵 <b>Тариф:</b> {billing_type_str} (базовая ставка: {student.lesson_price:,.0f} ₽/ур.)\n"
         f"💰 <b>{balance_info}</b>\n"
         f"📝 <b>Заметки / Цель:</b> {notes_text}\n\n"
         f"🗓 <b>Регулярное расписание:</b>\n{slots_text}\n"
@@ -173,10 +177,10 @@ async def cb_add_single_start(callback: CallbackQuery, state: FSMContext):
     if not student:
         return
     await state.set_state(AddSingleLessonFSM.datetime_str)
-    await state.update_data(student_id=student_id)
+    await state.update_data(student_id=student_id, default_subject=student.subject, default_price=student.lesson_price)
     
     await callback.message.edit_text(
-        f"➕ <b>Назначение разового урока для {student.name}</b>\n\n"
+        f"➕ <b>Назначение разового урока для {student.name} (Шаг 1 из 4)</b>\n\n"
         f"Введите дату и время урока в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n"
         f"Например: <i>15.11.2026 17:30</i>",
         parse_mode="HTML",
@@ -204,33 +208,81 @@ async def process_single_datetime(message: Message, state: FSMContext):
         ],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_schedule")]
     ])
-    await message.answer("Выберите длительность урока:", reply_markup=kb)
+    await message.answer("Шаг 2 из 4: Выберите длительность урока:", reply_markup=kb)
 
 @students_router.callback_query(AddSingleLessonFSM.duration, F.data.startswith("single_dur_"))
 async def process_single_duration(callback: CallbackQuery, state: FSMContext):
     dur = int(callback.data.split("_")[2])
+    await state.update_data(duration=dur)
+    await state.set_state(AddSingleLessonFSM.subject)
+    
     data = await state.get_data()
+    def_sub = data.get("default_subject", "")
+    
+    await callback.message.edit_text(
+        f"📚 <b>Шаг 3 из 4: Предмет урока</b>\n\n"
+        f"Введите предмет для этого занятия (например: <i>Математика</i> или <i>Физика</i>).\n"
+        f"Или отправьте <b>-</b>, чтобы оставить по умолчанию: <i>{def_sub}</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@students_router.message(AddSingleLessonFSM.subject)
+async def process_single_subject(message: Message, state: FSMContext):
+    sub = message.text.strip()
+    data = await state.get_data()
+    if sub == "-":
+        sub = data.get("default_subject", "")
+    await state.update_data(subject=sub)
+    await state.set_state(AddSingleLessonFSM.price)
+
+    def_pr = data.get("default_price", 0.0)
+    await message.answer(
+        f"💰 <b>Шаг 4 из 4: Стоимость урока</b>\n\n"
+        f"Введите стоимость в рублях (например: <i>1500</i> или <i>2000</i>).\n"
+        f"Или отправьте <b>-</b>, чтобы использовать базовую ставку: <i>{def_pr:,.0f} ₽</i>",
+        parse_mode="HTML"
+    )
+
+@students_router.message(AddSingleLessonFSM.price)
+async def process_single_price(message: Message, state: FSMContext):
+    text = message.text.strip()
+    data = await state.get_data()
+    
+    if text == "-":
+        price = data.get("default_price", 0.0)
+    else:
+        try:
+            price = float(text.replace(" ", "").replace(",", "."))
+        except ValueError:
+            await message.answer("Пожалуйста, введите число (стоимость в рублях) или '-' для базовой ставки:")
+            return
+
     student_id = data["student_id"]
     scheduled_at = datetime.fromisoformat(data["scheduled_at"])
+    dur = data["duration"]
+    subj = data["subject"]
 
     lesson = await LessonService.create_single_lesson(
-        tutor_id=callback.from_user.id,
+        tutor_id=message.from_user.id,
         student_id=student_id,
         scheduled_at=scheduled_at,
-        duration=dur
+        duration=dur,
+        subject=subj,
+        price=price
     )
     await state.clear()
-    
-    student = await StudentService.get_student_by_id(student_id, callback.from_user.id)
-    await callback.message.edit_text(
+
+    student = await StudentService.get_student_by_id(student_id, message.from_user.id)
+    await message.answer(
         f"✅ <b>Разовый урок назначен!</b>\n\n"
         f"👤 Ученик: <b>{student.name}</b>\n"
+        f"📚 Предмет: <b>{subj}</b>\n"
         f"⏰ Дата и время: <b>{scheduled_at.strftime('%d.%m.%Y в %H:%M')}</b> ({dur} мин.)\n"
         f"💵 Стоимость: <b>{lesson.price:,.0f} ₽</b>",
         parse_mode="HTML",
         reply_markup=get_student_card_keyboard(student)
     )
-    await callback.answer()
 
 # --- Добавление ученика (FSM) ---
 
@@ -253,7 +305,7 @@ async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=name)
     await state.set_state(AddStudentFSM.subject)
     await message.answer(
-        f"📚 <b>Шаг 2 из 5</b>\n\nКакой предмет изучаете с <b>{name}</b>? (например: <i>Английский язык, 9 класс</i>):",
+        f"📚 <b>Шаг 2 из 5</b>\n\nКакие предметы изучаете с <b>{name}</b>? (можно перечислить через запятую, например: <i>Математика, Физика</i>):",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard("menu_students")
     )
@@ -300,7 +352,7 @@ async def process_billing(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddStudentFSM.price)
     
     await callback.message.edit_text(
-        "💰 <b>Шаг 5 из 5</b>\n\nВведите <b>стоимость одного урока</b> в рублях (например: <i>1500</i>):",
+        "💰 <b>Шаг 5 из 5</b>\n\nВведите <b>базовую стоимость урока</b> в рублях (например: <i>1500</i>).\n<i>(В расписании для каждого отдельного предмета вы сможете задать свою цену)</i>:",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard("menu_students")
     )
@@ -332,7 +384,7 @@ async def process_price(message: Message, state: FSMContext):
 
     await message.answer(
         f"🎉 <b>Ученик {student.name} успешно добавлен!</b>\n\n"
-        f"Теперь вы можете настроить для него регулярное расписание занятий или внести оплату.",
+        f"Теперь вы можете настроить для него регулярное расписание занятий с отдельными предметами и ценами.",
         parse_mode="HTML",
         reply_markup=get_student_card_keyboard(student)
     )
@@ -354,8 +406,10 @@ async def cb_student_slots(callback: CallbackQuery, state: FSMContext):
     if student.recurring_slots:
         text += "Текущие дни занятий:\n"
         for s in student.recurring_slots:
-            text += f"• <b>{DAYS_FULL[s.day_of_week]}</b> в <b>{s.start_time.strftime('%H:%M')}</b>\n"
-            kb.append([InlineKeyboardButton(text=f"🗑 Удалить {DAYS_FULL[s.day_of_week]} {s.start_time.strftime('%H:%M')}", callback_data=f"del_slot_{s.id}_{student.id}")])
+            slot_subj = f" [{s.subject}]" if s.subject else ""
+            slot_pr = f" ({s.price:,.0f} ₽)" if s.price is not None else ""
+            text += f"• <b>{DAYS_FULL[s.day_of_week]}</b> в <b>{s.start_time.strftime('%H:%M')}</b>{slot_subj}{slot_pr}\n"
+            kb.append([InlineKeyboardButton(text=f"🗑 Удалить {DAYS_FULL[s.day_of_week]} {s.start_time.strftime('%H:%M')}{slot_subj}", callback_data=f"del_slot_{s.id}_{student.id}")])
     else:
         text += "<i>Пока нет добавленных дней занятий.</i>\n"
 
@@ -378,8 +432,9 @@ async def cb_del_slot(callback: CallbackQuery):
 @students_router.callback_query(F.data.startswith("add_slot_") & ~F.data.startswith("add_slot_day_"))
 async def cb_add_slot_start(callback: CallbackQuery, state: FSMContext):
     student_id = int(callback.data.split("_")[2])
+    student = await StudentService.get_student_by_id(student_id, callback.from_user.id)
     await state.set_state(AddSlotFSM.day_of_week)
-    await state.update_data(student_id=student_id)
+    await state.update_data(student_id=student_id, default_subject=student.subject, default_price=student.lesson_price)
     
     await callback.message.edit_text(
         "Выберите день недели для регулярного урока:",
@@ -413,19 +468,71 @@ async def process_slot_time(message: Message, state: FSMContext):
 
     hours, minutes = int(match.group(1)), int(match.group(2))
     slot_time = time(hour=hours, minute=minutes)
-    
+    await state.update_data(time_str=slot_time.strftime("%H:%M"))
+    await state.set_state(AddSlotFSM.subject)
+
     data = await state.get_data()
+    def_sub = data.get("default_subject", "")
+
+    await message.answer(
+        f"📚 <b>Предмет для этого дня занятий</b>\n\n"
+        f"Введите название предмета (например: <i>Математика</i> или <i>Физика</i>).\n"
+        f"Или отправьте <b>-</b>, чтобы оставить: <i>{def_sub}</i>",
+        parse_mode="HTML"
+    )
+
+@students_router.message(AddSlotFSM.subject)
+async def process_slot_subject(message: Message, state: FSMContext):
+    sub = message.text.strip()
+    data = await state.get_data()
+    if sub == "-":
+        sub = data.get("default_subject", "")
+    await state.update_data(subject=sub)
+    await state.set_state(AddSlotFSM.price)
+
+    def_pr = data.get("default_price", 0.0)
+    await message.answer(
+        f"💰 <b>Стоимость урока в этот день</b>\n\n"
+        f"Введите цену в рублях (например: <i>1500</i> или <i>2000</i>).\n"
+        f"Или отправьте <b>-</b>, чтобы оставить базовую ставку: <i>{def_pr:,.0f} ₽</i>",
+        parse_mode="HTML"
+    )
+
+@students_router.message(AddSlotFSM.price)
+async def process_slot_price(message: Message, state: FSMContext):
+    text = message.text.strip()
+    data = await state.get_data()
+    
+    if text == "-":
+        price = data.get("default_price", 0.0)
+    else:
+        try:
+            price = float(text.replace(" ", "").replace(",", "."))
+        except ValueError:
+            await message.answer("Пожалуйста, введите положительное число или '-' для базовой цены:")
+            return
+
     student_id = data["student_id"]
     day_of_week = data["day_of_week"]
+    t_parts = data["time_str"].split(":")
+    slot_time = time(hour=int(t_parts[0]), minute=int(t_parts[1]))
+    subj = data["subject"]
 
-    await StudentService.add_recurring_slot(student_id, day_of_week, slot_time)
+    await StudentService.add_recurring_slot(
+        student_id=student_id,
+        day_of_week=day_of_week,
+        start_time=slot_time,
+        duration=60,
+        subject=subj,
+        price=price
+    )
     await state.clear()
 
     await LessonService.generate_lessons_from_slots(message.from_user.id, days_ahead=14)
 
     student = await StudentService.get_student_by_id(student_id, message.from_user.id)
     await message.answer(
-        f"✅ Регулярный слот <b>{DAYS_FULL[day_of_week]} в {slot_time.strftime('%H:%M')}</b> успешно добавлен!",
+        f"✅ Регулярный слот <b>{DAYS_FULL[day_of_week]} в {slot_time.strftime('%H:%M')}</b> [{subj}] ({price:,.0f} ₽) успешно добавлен!",
         parse_mode="HTML",
         reply_markup=get_student_card_keyboard(student)
     )

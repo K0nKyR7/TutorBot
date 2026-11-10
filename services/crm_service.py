@@ -115,13 +115,22 @@ class StudentService:
             return student
 
     @staticmethod
-    async def add_recurring_slot(student_id: int, day_of_week: int, start_time: time, duration: int = 60) -> RecurringSlot:
+    async def add_recurring_slot(
+        student_id: int,
+        day_of_week: int,
+        start_time: time,
+        duration: int = 60,
+        subject: Optional[str] = None,
+        price: Optional[float] = None
+    ) -> RecurringSlot:
         async with async_session() as session:
             slot = RecurringSlot(
                 student_id=student_id,
                 day_of_week=day_of_week,
                 start_time=start_time,
-                duration_minutes=duration
+                duration_minutes=duration,
+                subject=subject,
+                price=price
             )
             session.add(slot)
             await session.commit()
@@ -145,20 +154,25 @@ class LessonService:
         student_id: int,
         scheduled_at: datetime,
         duration: int = 60,
+        subject: Optional[str] = None,
         topic: str = "",
         price: Optional[float] = None
     ) -> Lesson:
         async with async_session() as session:
+            st_stmt = select(Student).where(Student.id == student_id)
+            st = (await session.execute(st_stmt)).scalar_one_or_none()
+
             if price is None:
-                st_stmt = select(Student).where(Student.id == student_id)
-                st = (await session.execute(st_stmt)).scalar_one_or_none()
                 price = st.lesson_price if st else 0.0
+            if subject is None and st:
+                subject = st.subject
 
             lesson = Lesson(
                 tutor_id=tutor_id,
                 student_id=student_id,
                 scheduled_at=scheduled_at,
                 duration_minutes=duration,
+                subject=subject,
                 topic=topic,
                 price=price,
                 status="scheduled"
@@ -283,12 +297,15 @@ class LessonService:
                                 )
                                 exists = (await session.execute(check_stmt)).scalar_one_or_none()
                                 if not exists:
+                                    slot_price = slot.price if slot.price is not None else student.lesson_price
+                                    slot_subj = slot.subject if slot.subject else student.subject
                                     lesson = Lesson(
                                         tutor_id=tutor_id,
                                         student_id=student.id,
                                         scheduled_at=scheduled_dt,
                                         duration_minutes=slot.duration_minutes,
-                                        price=student.lesson_price,
+                                        subject=slot_subj,
+                                        price=slot_price,
                                         status="scheduled"
                                     )
                                     session.add(lesson)
@@ -368,12 +385,6 @@ class FinanceService:
 class ExcelExportService:
     @staticmethod
     async def generate_crm_report(tutor_id: int) -> BytesIO:
-        """
-        Генерирует Excel-отчет со вкладками:
-        1. Ученики и балансы
-        2. История уроков
-        3. История платежей
-        """
         async with async_session() as session:
             students = (await session.execute(
                 select(Student).where(Student.tutor_id == tutor_id).order_by(Student.name)
@@ -393,20 +404,13 @@ class ExcelExportService:
 
         wb = openpyxl.Workbook()
         
-        # Стили
         header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
         header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-        border = Border(
-            left=Side(style="thin", color="CCCCCC"),
-            right=Side(style="thin", color="CCCCCC"),
-            top=Side(style="thin", color="CCCCCC"),
-            bottom=Side(style="thin", color="CCCCCC")
-        )
 
         # 1. Лист Ученики
         ws_students = wb.active
         ws_students.title = "Ученики"
-        headers_st = ["ID", "Имя", "Предмет", "Контакты", "Тип оплаты", "Ставка (₽)", "Осталось уроков", "Баланс (₽)", "Статус", "Заметки"]
+        headers_st = ["ID", "Имя", "Предмет(ы)", "Контакты", "Тип оплаты", "Базовая ставка (₽)", "Осталось уроков", "Баланс (₽)", "Статус", "Заметки"]
         ws_students.append(headers_st)
         
         for col_num in range(1, len(headers_st) + 1):
@@ -437,7 +441,7 @@ class ExcelExportService:
 
         # 2. Лист Уроки
         ws_lessons = wb.create_sheet(title="История уроков")
-        headers_les = ["ID", "Дата и время", "Ученик", "Длит. (мин)", "Тема", "ДЗ", "Статус", "Стоимость (₽)"]
+        headers_les = ["ID", "Дата и время", "Ученик", "Предмет", "Длит. (мин)", "Тема", "ДЗ", "Статус", "Стоимость (₽)"]
         ws_lessons.append(headers_les)
         
         for col_num in range(1, len(headers_les) + 1):
@@ -458,6 +462,7 @@ class ExcelExportService:
                 l.id,
                 l.scheduled_at.strftime("%d.%m.%Y %H:%M"),
                 l.student.name if l.student else "—",
+                l.subject or (l.student.subject if l.student else "-"),
                 l.duration_minutes,
                 l.topic or "-",
                 l.homework or "-",
@@ -486,7 +491,6 @@ class ExcelExportService:
                 p.comment or ""
             ])
 
-        # Автоподбор ширины столбцов
         for sheet in wb.worksheets:
             for col in sheet.columns:
                 max_len = max(len(str(cell.value or "")) for cell in col)

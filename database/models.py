@@ -13,9 +13,8 @@ class Tutor(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=True)
     username: Mapped[str] = mapped_column(String(255), nullable=True)
-    # Настройки уведомлений
     daily_digest_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    digest_hour: Mapped[int] = mapped_column(Integer, default=8) # 8:00 утра
+    digest_hour: Mapped[int] = mapped_column(Integer, default=8)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     students = relationship("Student", back_populates="tutor", cascade="all, delete-orphan")
@@ -33,13 +32,11 @@ class Student(Base):
     subject: Mapped[str] = mapped_column(String(255), nullable=True)
     notes: Mapped[str] = mapped_column(Text, nullable=True)
 
-    # billing_type: "per_lesson" or "package"
+    # billing_type: "per_lesson", "package", "postpaid_weekly"
     billing_type: Mapped[str] = mapped_column(String(50), default="per_lesson")
-    lesson_price: Mapped[float] = mapped_column(Float, default=0.0)
+    lesson_price: Mapped[float] = mapped_column(Float, default=0.0) # Базовая ставка
     
-    # Для пакетов: сколько уроков осталось
     prepaid_lessons_left: Mapped[int] = mapped_column(Integer, default=0)
-    # Для поурочной оплаты: баланс в рублях (может быть отрицательным, если долг)
     balance_rub: Mapped[float] = mapped_column(Float, default=0.0)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -56,10 +53,13 @@ class RecurringSlot(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     student_id: Mapped[int] = mapped_column(Integer, ForeignKey("students.id"))
     
-    # 0 = Понедельник, 1 = Вторник, ..., 6 = Воскресенье
-    day_of_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    day_of_week: Mapped[int] = mapped_column(Integer, nullable=False) # 0..6
     start_time: Mapped[time] = mapped_column(Time, nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    
+    # Предмет и цена конкретно для этого слота (если отличаются от базовой ставки ученика)
+    subject: Mapped[str] = mapped_column(String(255), nullable=True)
+    price: Mapped[float] = mapped_column(Float, nullable=True)
 
     student = relationship("Student", back_populates="recurring_slots")
 
@@ -72,10 +72,10 @@ class Lesson(Base):
     
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
-    topic: Mapped[str] = mapped_column(String(255), nullable=True) # Тема урока
-    homework: Mapped[str] = mapped_column(Text, nullable=True)     # Домашнее задание
+    subject: Mapped[str] = mapped_column(String(255), nullable=True) # Конкретный предмет урока
+    topic: Mapped[str] = mapped_column(String(255), nullable=True)   # Тема урока
+    homework: Mapped[str] = mapped_column(Text, nullable=True)       # Домашнее задание
 
-    # status: "scheduled", "completed", "cancelled_by_student", "cancelled_by_tutor"
     status: Mapped[str] = mapped_column(String(50), default="scheduled")
     price: Mapped[float] = mapped_column(Float, default=0.0)
     is_paid: Mapped[bool] = mapped_column(Boolean, default=False)

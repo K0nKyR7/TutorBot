@@ -87,11 +87,12 @@ async def render_lessons_list(callback: CallbackQuery, lessons: list, period_tit
         dt_str = l.scheduled_at.strftime("%d.%m %H:%M")
         icon = status_emoji.get(l.status, "⏳")
         student_name = l.student.name if l.student else "Ученик"
-        text += f"{icon} <b>{dt_str}</b> — {student_name} ({l.duration_minutes} мин.)\n"
+        subj_str = f" [{l.subject}]" if l.subject else ""
+        text += f"{icon} <b>{dt_str}</b> — {student_name}{subj_str} ({l.duration_minutes} мин.)\n"
         
         kb.append([
             InlineKeyboardButton(
-                text=f"{icon} {dt_str} {student_name}",
+                text=f"{icon} {dt_str} {student_name}{subj_str}",
                 callback_data=f"lesson_view_{l.id}"
             )
         ])
@@ -119,12 +120,14 @@ async def cb_lesson_view(callback: CallbackQuery, state: FSMContext = None):
     }
 
     st_name = lesson.student.name if lesson.student else "Не указан"
+    subj_name = lesson.subject if lesson.subject else (lesson.student.subject if lesson.student else "Не указан")
     topic_str = lesson.topic if lesson.topic else "<i>Не заполнена</i>"
     hw_str = lesson.homework if lesson.homework else "<i>Не задано</i>"
 
     text = (
         f"📖 <b>Информация об уроке</b>\n\n"
         f"👤 <b>Ученик:</b> {st_name}\n"
+        f"📚 <b>Предмет:</b> {subj_name}\n"
         f"⏰ <b>Дата и время:</b> {lesson.scheduled_at.strftime('%d.%m.%Y в %H:%M')}\n"
         f"⏳ <b>Длительность:</b> {lesson.duration_minutes} мин.\n"
         f"💵 <b>Стоимость:</b> {lesson.price:,.0f} ₽\n"
