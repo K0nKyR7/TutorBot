@@ -354,6 +354,8 @@ class FinanceService:
             for st in all_students:
                 if st.billing_type == "package" and st.prepaid_lessons_left <= 0:
                     debts.append((st, f"Осталось уроков: {st.prepaid_lessons_left}"))
+                elif st.billing_type == "postpaid_weekly" and st.balance_rub < 0:
+                    debts.append((st, f"Постоплата за неделю: {abs(st.balance_rub):.0f} руб."))
                 elif st.billing_type == "per_lesson" and st.balance_rub < 0:
                     debts.append((st, f"Долг: {abs(st.balance_rub):.0f} руб."))
 
@@ -413,16 +415,22 @@ class ExcelExportService:
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
+        billing_excel_names = {
+            "package": "Пакет",
+            "per_lesson": "Поурочно",
+            "postpaid_weekly": "Постоплата (в конце недели)"
+        }
+
         for s in students:
             ws_students.append([
                 s.id,
                 s.name,
                 s.subject or "-",
                 s.contact or "-",
-                "Пакет" if s.billing_type == "package" else "Поурочно",
+                billing_excel_names.get(s.billing_type, s.billing_type),
                 s.lesson_price,
                 s.prepaid_lessons_left if s.billing_type == "package" else "-",
-                s.balance_rub if s.billing_type == "per_lesson" else "-",
+                s.balance_rub if s.billing_type in ["per_lesson", "postpaid_weekly"] else "-",
                 "Активен" if s.is_active else "В архиве",
                 s.notes or ""
             ])

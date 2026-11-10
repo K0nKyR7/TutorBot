@@ -74,7 +74,13 @@ async def cb_view_student(callback: CallbackQuery, state: FSMContext):
         return
 
     status_str = "Активен ✅" if student.is_active else "В архиве 📦"
-    billing_type_str = "Поурочная оплата" if student.billing_type == "per_lesson" else "Пакет (абонемент)"
+    
+    billing_names = {
+        "per_lesson": "Поурочная оплата",
+        "package": "Пакет (абонемент)",
+        "postpaid_weekly": "Постоплата (в конце недели)"
+    }
+    billing_type_str = billing_names.get(student.billing_type, student.billing_type)
     
     slots_text = ""
     if student.recurring_slots:
@@ -88,6 +94,11 @@ async def cb_view_student(callback: CallbackQuery, state: FSMContext):
 
     if student.billing_type == "package":
         balance_info = f"Оплачено уроков: <b>{student.prepaid_lessons_left} шт.</b>"
+    elif student.billing_type == "postpaid_weekly":
+        if student.balance_rub < 0:
+            balance_info = f"К оплате за неделю: <b>{abs(student.balance_rub):,.0f} ₽</b>"
+        else:
+            balance_info = f"Баланс: <b>{student.balance_rub:+.0f} ₽</b>"
     else:
         balance_info = f"Баланс: <b>{student.balance_rub:+.0f} ₽</b>"
 
@@ -267,6 +278,7 @@ async def process_contact(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Поурочная оплата", callback_data="billing_per_lesson")],
         [InlineKeyboardButton(text="📦 Абонемент / Пакет уроков", callback_data="billing_package")],
+        [InlineKeyboardButton(text="🗓 Постоплата (в конце недели)", callback_data="billing_postpaid_weekly")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="menu_students")]
     ])
     await message.answer(
@@ -277,7 +289,13 @@ async def process_contact(message: Message, state: FSMContext):
 
 @students_router.callback_query(AddStudentFSM.billing_type, F.data.startswith("billing_"))
 async def process_billing(callback: CallbackQuery, state: FSMContext):
-    b_type = "per_lesson" if callback.data == "billing_per_lesson" else "package"
+    if callback.data == "billing_package":
+        b_type = "package"
+    elif callback.data == "billing_postpaid_weekly":
+        b_type = "postpaid_weekly"
+    else:
+        b_type = "per_lesson"
+
     await state.update_data(billing_type=b_type)
     await state.set_state(AddStudentFSM.price)
     
@@ -430,6 +448,13 @@ async def cb_pay_start(callback: CallbackQuery, state: FSMContext):
             f"📦 <b>Пополнение пакета уроков для {student.name}</b>\n\n"
             f"Введите <b>количество оплаченных уроков</b> (например: <i>4</i> или <i>8</i>):"
         )
+    elif student.billing_type == "postpaid_weekly":
+        await state.set_state(PaymentFSM.amount)
+        due_text = f" (к оплате за неделю: {abs(student.balance_rub):,.0f} ₽)" if student.balance_rub < 0 else ""
+        text = (
+            f"🗓 <b>Оплата за неделю для {student.name}</b>{due_text}\n\n"
+            f"Введите <b>внесенную сумму</b> в рублях (например: <i>{abs(student.balance_rub):.0f}</i>):"
+        )
     else:
         await state.set_state(PaymentFSM.amount)
         text = (
@@ -492,18 +517,20 @@ async def process_payment_amount(message: Message, state: FSMContext):
     student_id = data["student_id"]
     student = await StudentService.get_student_by_id(student_id, message.from_user.id)
 
+    comment = "Оплата за неделю" if student.billing_type == "postpaid_weekly" else "Пополнение баланса"
+
     await FinanceService.record_payment(
         tutor_id=message.from_user.id,
         student_id=student_id,
         amount=amount,
         lessons_count=0,
-        comment="Пополнение баланса"
+        comment=comment
     )
     await state.clear()
 
     new_bal = student.balance_rub + amount
     await message.answer(
-        f"✅ <b>Баланс успешно пополнен!</b>\n\n"
+        f"✅ <b>Оплата успешно внесена!</b>\n\n"
         f"Ученик: <b>{student.name}</b>\n"
         f"Внесено: <b>{amount:,.0f} ₽</b>\n"
         f"Текущий баланс: <b>{new_bal:+.0f} ₽</b>",

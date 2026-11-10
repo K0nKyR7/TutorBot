@@ -26,6 +26,8 @@ def get_students_menu(students: list[Student]):
         status_icon = "🟢" if s.is_active else "⚪️"
         if s.billing_type == "package":
             bal_str = f"[{s.prepaid_lessons_left} ур.]"
+        elif s.billing_type == "postpaid_weekly":
+            bal_str = f"[к оплате: {abs(s.balance_rub):.0f} ₽]" if s.balance_rub < 0 else f"[{s.balance_rub:+.0f} ₽]"
         else:
             bal_str = f"[{s.balance_rub:+.0f} ₽]"
         kb.append([
