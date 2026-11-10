@@ -18,16 +18,19 @@ logger = logging.getLogger(__name__)
 async def start_dummy_web_server():
     """
     Фейковый веб-сервер для бесплатного тарифа Render (Web Service).
-    Render требует, чтобы сервис слушал порт из переменной PORT.
+    Возвращает статус 200 OK без тела ответа (0 байт), чтобы cron-job.org никогда не ругался на размер.
     """
     port = int(os.getenv("PORT", 8080))
     app = web.Application()
 
     async def handle_ping(request):
-        return web.Response(text="TutorCRM Bot is running!")
+        # 204 No Content или 200 OK с пустым телом
+        return web.Response(status=200, text="")
 
     app.router.add_get("/", handle_ping)
     app.router.add_get("/health", handle_ping)
+    app.router.add_head("/", handle_ping)
+    app.router.add_head("/health", handle_ping)
 
     runner = web.AppRunner(app)
     await runner.setup()
