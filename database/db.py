@@ -3,7 +3,17 @@ from sqlalchemy import text
 from config import settings
 from database.models import Base
 
-engine = create_async_engine(settings.DATABASE_URL, echo=False)
+# Добавляем pool_pre_ping=True и pool_recycle для serverless Postgres (Neon)
+engine_kwargs = {"echo": False}
+if "sqlite" not in settings.DATABASE_URL:
+    engine_kwargs.update({
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+        "pool_size": 10,
+        "max_overflow": 20
+    })
+
+engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def init_db():
