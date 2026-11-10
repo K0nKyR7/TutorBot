@@ -108,6 +108,8 @@ async def cb_view_student(callback: CallbackQuery, state: FSMContext):
 
     notes_text = student.notes if student.notes else "<i>Нет заметок</i>"
 
+    plan = StudentService.calculate_student_plan_income(student)
+
     text = (
         f"👤 <b>Карточка ученика: {student.name}</b>\n\n"
         f"📚 <b>Предмет(ы):</b> {student.subject or 'Не указан'}\n"
@@ -115,6 +117,7 @@ async def cb_view_student(callback: CallbackQuery, state: FSMContext):
         f"📊 <b>Статус:</b> {status_str}\n"
         f"💵 <b>Тариф:</b> {billing_type_str} (базовая ставка: {student.lesson_price:,.0f} ₽/ур.)\n"
         f"💰 <b>{balance_info}</b>\n"
+        f"📈 <b>Доход от ученика:</b> ~{plan['weekly']:,.0f} ₽/нед. (<b>~{plan['monthly']:,.0f} ₽/мес.</b>)\n"
         f"📝 <b>Заметки / Цель:</b> {notes_text}\n\n"
         f"🗓 <b>Регулярное расписание:</b>\n{slots_text}\n"
     )

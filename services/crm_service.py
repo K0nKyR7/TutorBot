@@ -1,5 +1,5 @@
 from datetime import datetime, date, time, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -90,6 +90,24 @@ class StudentService:
             ).where(and_(Student.id == student_id, Student.tutor_id == tutor_id))
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
+
+    @staticmethod
+    def calculate_student_plan_income(student: Student) -> Dict[str, float]:
+        """
+        Считает плановый доход от ученика в неделю и в месяц на основе регулярных слотов или базовой ставки.
+        """
+        weekly_sum = 0.0
+        if student.recurring_slots:
+            for slot in student.recurring_slots:
+                price = slot.price if slot.price is not None else student.lesson_price
+                weekly_sum += price
+        else:
+            weekly_sum = student.lesson_price
+        monthly_sum = weekly_sum * 4.33
+        return {
+            "weekly": weekly_sum,
+            "monthly": monthly_sum
+        }
 
     @staticmethod
     async def update_student_notes(student_id: int, tutor_id: int, notes: str) -> Optional[Student]:
@@ -348,11 +366,20 @@ class FinanceService:
             now = datetime.now()
             start_of_month = datetime(now.year, now.month, 1)
 
-            pmt_stmt = select(func.sum(Payment.amount)).where(
+            # Фактический доход за месяц (внесенные оплаты)
+            pmt_month = select(func.sum(Payment.amount)).where(
                 and_(Payment.tutor_id == tutor_id, Payment.created_at >= start_of_month)
             )
-            month_income = (await session.execute(pmt_stmt)).scalar() or 0.0
+            month_income = (await session.execute(pmt_month)).scalar() or 0.0
 
+            # Фактический доход за последние 7 дней (неделя)
+            start_of_week = now - timedelta(days=7)
+            pmt_week = select(func.sum(Payment.amount)).where(
+                and_(Payment.tutor_id == tutor_id, Payment.created_at >= start_of_week)
+            )
+            week_income = (await session.execute(pmt_week)).scalar() or 0.0
+
+            # Проведено уроков за месяц
             lessons_stmt = select(func.count(Lesson.id)).where(
                 and_(
                     Lesson.tutor_id == tutor_id,
@@ -362,13 +389,18 @@ class FinanceService:
             )
             lessons_completed = (await session.execute(lessons_stmt)).scalar() or 0
 
-            students_stmt = select(Student).where(
+            # Все активные ученики со слотами (для расчета планового потенциала)
+            students_stmt = select(Student).options(selectinload(Student.recurring_slots)).where(
                 and_(Student.tutor_id == tutor_id, Student.is_active == True)
             )
             all_students = (await session.execute(students_stmt)).scalars().all()
             
+            planned_weekly_total = 0.0
             debts = []
             for st in all_students:
+                plan = StudentService.calculate_student_plan_income(st)
+                planned_weekly_total += plan["weekly"]
+
                 if st.billing_type == "package" and st.prepaid_lessons_left <= 0:
                     debts.append((st, f"Осталось уроков: {st.prepaid_lessons_left}"))
                 elif st.billing_type == "postpaid_weekly" and st.balance_rub < 0:
@@ -376,8 +408,13 @@ class FinanceService:
                 elif st.billing_type == "per_lesson" and st.balance_rub < 0:
                     debts.append((st, f"Долг: {abs(st.balance_rub):.0f} руб."))
 
+            planned_monthly_total = planned_weekly_total * 4.33
+
             return {
                 "month_income": month_income,
+                "week_income": week_income,
+                "planned_weekly": planned_weekly_total,
+                "planned_monthly": planned_monthly_total,
                 "lessons_completed": lessons_completed,
                 "debts": debts
             }
@@ -387,7 +424,7 @@ class ExcelExportService:
     async def generate_crm_report(tutor_id: int) -> BytesIO:
         async with async_session() as session:
             students = (await session.execute(
-                select(Student).where(Student.tutor_id == tutor_id).order_by(Student.name)
+                select(Student).options(selectinload(Student.recurring_slots)).where(Student.tutor_id == tutor_id).order_by(Student.name)
             )).scalars().all()
 
             lessons = (await session.execute(
@@ -410,7 +447,10 @@ class ExcelExportService:
         # 1. Лист Ученики
         ws_students = wb.active
         ws_students.title = "Ученики"
-        headers_st = ["ID", "Имя", "Предмет(ы)", "Контакты", "Тип оплаты", "Базовая ставка (₽)", "Осталось уроков", "Баланс (₽)", "Статус", "Заметки"]
+        headers_st = [
+            "ID", "Имя", "Предмет(ы)", "Контакты", "Тип оплаты", "Базовая ставка (₽)",
+            "План в нед. (₽)", "План в мес. (₽)", "Осталось уроков", "Баланс (₽)", "Статус", "Заметки"
+        ]
         ws_students.append(headers_st)
         
         for col_num in range(1, len(headers_st) + 1):
@@ -426,6 +466,7 @@ class ExcelExportService:
         }
 
         for s in students:
+            plan = StudentService.calculate_student_plan_income(s)
             ws_students.append([
                 s.id,
                 s.name,
@@ -433,6 +474,8 @@ class ExcelExportService:
                 s.contact or "-",
                 billing_excel_names.get(s.billing_type, s.billing_type),
                 s.lesson_price,
+                round(plan["weekly"]),
+                round(plan["monthly"]),
                 s.prepaid_lessons_left if s.billing_type == "package" else "-",
                 s.balance_rub if s.billing_type in ["per_lesson", "postpaid_weekly"] else "-",
                 "Активен" if s.is_active else "В архиве",

@@ -26,7 +26,7 @@ async def cmd_start(message: Message, state: FSMContext):
         f"• 👥 <b>Ученики:</b> карточки, контакты, заметки, гибкая оплата\n"
         f"• 📅 <b>Расписание:</b> регулярные слоты и разовые уроки\n"
         f"• 📝 <b>Учебный процесс:</b> запись тем и домашних заданий\n"
-        f"• 💰 <b>Финансы:</b> учет абонементов, баланса и долгов\n"
+        f"• 💰 <b>Финансы:</b> доход за неделю/месяц, прогноз и учет долгов\n"
         f"• 📊 <b>Экспорт:</b> моментальная выгрузка всей базы в Excel\n"
         f"• 🔔 <b>Утренний дайджест:</b> расписание уроков каждое утро в 08:00\n\n"
         f"Выберите раздел в меню ниже:"
@@ -49,9 +49,14 @@ async def cb_finance(callback: CallbackQuery):
     stats = await FinanceService.get_tutor_stats(callback.from_user.id)
     
     text = (
-        f"📊 <b>Финансы и статистика за текущий месяц</b>\n\n"
-        f"💰 <b>Получено оплат:</b> {stats['month_income']:,.0f} ₽\n"
-        f"🎓 <b>Проведено уроков:</b> {stats['lessons_completed']} шт.\n\n"
+        f"📊 <b>Финансы и аналитика доходов</b>\n\n"
+        f"💵 <b>Фактически получено оплат:</b>\n"
+        f"• За последние 7 дней: <b>{stats['week_income']:,.0f} ₽</b>\n"
+        f"• За текущий месяц: <b>{stats['month_income']:,.0f} ₽</b>\n"
+        f"• Проведено уроков в этом месяце: <b>{stats['lessons_completed']} шт.</b>\n\n"
+        f"📈 <b>Плановый потенциал (по расписанию):</b>\n"
+        f"• Ожидаемый доход в неделю: <b>~{stats['planned_weekly']:,.0f} ₽</b>\n"
+        f"• Ожидаемый доход в месяц: <b>~{stats['planned_monthly']:,.0f} ₽</b>\n\n"
     )
 
     debts = stats["debts"]
@@ -80,7 +85,7 @@ async def cb_export_excel(callback: CallbackQuery):
     input_file = BufferedInputFile(excel_file.getvalue(), filename=filename)
     await callback.message.answer_document(
         input_file,
-        caption=f"📊 <b>Ваш актуальный отчет TutorCRM</b>\nСодержит вкладки: <i>Ученики</i>, <i>История уроков</i> и <i>Платежи</i>.",
+        caption=f"📊 <b>Ваш актуальный отчет TutorCRM</b>\nСодержит вкладки: <i>Ученики</i> (с расчетом доходов), <i>История уроков</i> и <i>Платежи</i>.",
         parse_mode="HTML"
     )
 
