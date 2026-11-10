@@ -133,6 +133,17 @@ class StudentService:
             return student
 
     @staticmethod
+    async def delete_student_permanently(student_id: int, tutor_id: int) -> bool:
+        async with async_session() as session:
+            stmt = select(Student).where(and_(Student.id == student_id, Student.tutor_id == tutor_id))
+            student = (await session.execute(stmt)).scalar_one_or_none()
+            if student:
+                await session.delete(student)
+                await session.commit()
+                return True
+            return False
+
+    @staticmethod
     async def add_recurring_slot(
         student_id: int,
         day_of_week: int,
@@ -423,8 +434,11 @@ class ExcelExportService:
     @staticmethod
     async def generate_crm_report(tutor_id: int) -> BytesIO:
         async with async_session() as session:
+            # Выгружаем только активных учеников
             students = (await session.execute(
-                select(Student).options(selectinload(Student.recurring_slots)).where(Student.tutor_id == tutor_id).order_by(Student.name)
+                select(Student).options(selectinload(Student.recurring_slots)).where(
+                    and_(Student.tutor_id == tutor_id, Student.is_active == True)
+                ).order_by(Student.name)
             )).scalars().all()
 
             lessons = (await session.execute(

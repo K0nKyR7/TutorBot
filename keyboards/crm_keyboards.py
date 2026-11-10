@@ -42,6 +42,12 @@ def get_students_menu(students: list[Student]):
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def get_student_card_keyboard(student: Student):
+    action_archive_btn = (
+        InlineKeyboardButton(text="📦 В архив", callback_data=f"student_toggle_{student.id}")
+        if student.is_active
+        else InlineKeyboardButton(text="🔄 Восстановить", callback_data=f"student_toggle_{student.id}")
+    )
+    
     kb = [
         [
             InlineKeyboardButton(text="💳 Внести оплату", callback_data=f"student_pay_{student.id}"),
@@ -52,13 +58,24 @@ def get_student_card_keyboard(student: Student):
         ],
         [
             InlineKeyboardButton(text="📝 Изменить заметку", callback_data=f"student_notes_{student.id}"),
-            InlineKeyboardButton(
-                text="📦 В архив" if student.is_active else "🔄 Восстановить",
-                callback_data=f"student_toggle_{student.id}"
-            )
+            action_archive_btn
+        ],
+        [
+            InlineKeyboardButton(text="🗑 Удалить ученика навсегда", callback_data=f"student_del_ask_{student.id}")
         ],
         [
             InlineKeyboardButton(text="🔙 К списку учеников", callback_data="menu_students")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def get_confirm_delete_keyboard(student_id: int):
+    kb = [
+        [
+            InlineKeyboardButton(text="⚠️ Да, удалить навсегда", callback_data=f"student_del_confirm_{student_id}")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data=f"student_view_{student_id}")
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)

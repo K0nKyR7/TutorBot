@@ -9,6 +9,7 @@ from services.crm_service import StudentService, FinanceService, LessonService
 from keyboards.crm_keyboards import (
     get_students_menu,
     get_student_card_keyboard,
+    get_confirm_delete_keyboard,
     get_days_keyboard,
     get_cancel_keyboard,
     DAYS_FULL
@@ -137,6 +138,37 @@ async def cb_toggle_student(callback: CallbackQuery):
         msg = "Ученик перенесен в архив" if not student.is_active else "Ученик восстановлен из архива"
         await callback.answer(msg, show_alert=True)
         await cb_view_student(callback, None)
+
+@students_router.callback_query(F.data.startswith("student_del_ask_"))
+async def cb_delete_student_ask(callback: CallbackQuery):
+    student_id = int(callback.data.split("_")[3])
+    student = await StudentService.get_student_by_id(student_id, callback.from_user.id)
+    if not student:
+        await callback.answer("Ученик не найден", show_alert=True)
+        return
+
+    text = (
+        f"⚠️ <b>Внимание! Вы уверены, что хотите удалить ученика {student.name}?</b>\n\n"
+        f"Это действие <b>безвозвратно удалит</b> ученика, все его расписание, историю уроков и платежи из базы данных.\n"
+        f"Ученик больше не будет появляться ни в одном отчете."
+    )
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_confirm_delete_keyboard(student_id)
+    )
+    await callback.answer()
+
+@students_router.callback_query(F.data.startswith("student_del_confirm_"))
+async def cb_delete_student_confirm(callback: CallbackQuery):
+    student_id = int(callback.data.split("_")[3])
+    success = await StudentService.delete_student_permanently(student_id, callback.from_user.id)
+    if success:
+        await callback.answer("Ученик безвозвратно удален из базы данных", show_alert=True)
+        # Возвращаем в список учеников
+        await cb_students_list(callback, None)
+    else:
+        await callback.answer("Ошибка при удалении ученика", show_alert=True)
 
 # --- Редактирование заметок ---
 
